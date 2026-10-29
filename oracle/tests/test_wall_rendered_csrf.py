@@ -216,7 +216,7 @@ def test_rendered_redirect_never_forwards_credentials_cross_origin():
 def test_execute_confirm_routes_by_claim(monkeypatch):
     seen = {}
 
-    def fake_run(check, is_testnet=False):
+    def fake_run(check, is_testnet=False, provenance=None):
         seen["curl"] = True
         return 0, "HTTP/1.1 200 OK\n\nok", ""
 

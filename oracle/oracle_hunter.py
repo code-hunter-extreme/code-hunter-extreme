@@ -1738,7 +1738,16 @@ def _lens_systems_for(ctx, task: str, cfg=None, env=None, no_cloud: bool = False
     if estimate_tokens(full, task) <= budget:
         return [full]
     max_system_chars = max(0, (budget - task_tok) * 4 - 8)
-    systems = ctx.system_prompt_slices(max_system_chars)
+    # A single corpus document that cannot fit one pass budget must be split
+    # across passes, not raised out of cmd_hunt. Default fail-loud here cost
+    # the 2026-10-28 Matomo rerun: paradox-impossible-crossover (41,793 chars)
+    # plus the 9,660-char foundations overflowed a 50,712-char block budget,
+    # and the ValueError killed the hunt after both lenses had submitted
+    # passes. Splitting keeps the packing law (every character reaches the
+    # lens exactly once); it only changes how many passes carry it.
+    systems = ctx.system_prompt_slices(
+        max_system_chars, corpus_split_oversized=True
+    )
     for system in systems:
         need = estimate_tokens(system, task)
         if need > budget:
@@ -3233,6 +3242,13 @@ def _cloud_escalate(
 
 _SHELL_METACHARS = (";", "|", "`", "$(", "&", "&&")
 _ALLOWED_CHECK_BINS = ("curl", "slither", "forge", "cast")
+# Lens witness tier (2026-10-28 two-tier evidence decision): deterministic
+# template mints only — a card stamped check_provenance="lens" by
+# oracle_seam_templates may run a read-only grep over the downloaded target
+# source inside the workspace. Never tokens from model prose: a check string
+# that came out of an LLM stays on the strict curl/web3 list.
+_LENS_CHECK_BINS = ("grep",)
+_SAFE_GREP_FLAGS = {"-n", "-i", "-w", "-c", "-E", "-F", "-l"}
 _SAFE_CURL_FLAGS = {
     "-i",
     "-I",
@@ -3455,13 +3471,20 @@ def _attribution_curl_argv(argv: List[str]) -> List[str]:
 
 
 def _run_check(
-    check_cmd: str, timeout: int = 30, is_testnet: bool = False
+    check_cmd: str,
+    timeout: int = 30,
+    is_testnet: bool = False,
+    provenance: Optional[str] = None,
 ) -> Tuple[int, str, str]:
     """
     Execute the reproducible check command from a seam card.
     The shell is NEVER invoked: the command is parsed with shlex and run as
     argv with shell=False. The binary must be allow-listed and every token
     validated; anything else fails closed. Returns (returncode, stdout, stderr).
+
+    provenance="lens" additionally admits the read-only witness bins above —
+    but only for deterministic template/carved mints, never model-authored
+    text (prompt-injection remote-execution boundary, S6 family).
 
     Metachar gate is token-position-aware (Phase 3): a blanket raw-string
     scan confused DATA with CONTROL and blocked all authenticated hunting
@@ -3480,7 +3503,8 @@ def _run_check(
         return 1, "", "[BLOCKED] check rejected: unparseable command"
     if not argv:
         return 1, "", "[BLOCKED] check rejected: empty command"
-    if os.path.basename(argv[0]) not in _ALLOWED_CHECK_BINS:
+    bins = _ALLOWED_CHECK_BINS + (_LENS_CHECK_BINS if provenance == "lens" else ())
+    if os.path.basename(argv[0]) not in bins:
         return 1, "", "[BLOCKED] check rejected: binary not allow-listed"
     bin_name = os.path.basename(argv[0])
     if bin_name == "curl":
@@ -3553,6 +3577,16 @@ def _run_check(
                 i += 1
                 continue
             return 1, "", f"[BLOCKED] check rejected: unsafe curl argument '{arg}'"
+    elif bin_name == "grep":
+        # Read-only witness: flags limited to the safe set, no shell
+        # metacharacters in pattern or path tokens, no file-list flags.
+        for arg in argv[1:]:
+            if arg.startswith("-"):
+                if arg not in _SAFE_GREP_FLAGS:
+                    return 1, "", f"[BLOCKED] check rejected: unsafe grep flag '{arg}'"
+                continue
+            if any(m in arg for m in _SHELL_METACHARS):
+                return 1, "", "[BLOCKED] check rejected: shell metacharacters not allowed"
     elif bin_name == "slither":
         i = 1
         while i < len(argv):
@@ -3716,7 +3750,9 @@ def _execute_confirm(
             scope_gate=scope_gate,
             allow_mutation=is_testnet,
         )
-    return _run_check(check, is_testnet=is_testnet)
+    return _run_check(
+        check, is_testnet=is_testnet, provenance=(seam or {}).get("check_provenance")
+    )
 
 
 def _assess_response(
@@ -4764,7 +4800,9 @@ def teardown_poc(
     if runner is None:
 
         def _default_runner(cmd: str) -> Tuple[int, str, str]:
-            return _run_check(cmd, is_testnet=is_testnet)
+            return _run_check(
+                cmd, is_testnet=is_testnet, provenance=seam.get("check_provenance")
+            )
 
         runner = _default_runner
     if evaluator is None:

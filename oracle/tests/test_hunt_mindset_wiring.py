@@ -214,3 +214,34 @@ def test_lens_systems_for_chunks_to_lane_budget(monkeypatch):
     assert len(systems) > 1, "77k-token mitre prompt must chunk under the cap"
     for system in systems:
         assert oracle_llm.estimate_tokens(system, task) <= 65536 - 2048
+
+
+def test_paradox_lens_splits_a_document_larger_than_one_pass():
+    """2026-10-28 Matomo rerun died here.
+
+    paradox-impossible-crossover (41,793 chars) plus the 9,660-char
+    foundations overflowed the 50,712-char block budget, so
+    source_context_chunks raised and cmd_hunt crashed after both lenses
+    had submitted passes — the hunt produced nothing and looked starved.
+    An oversized document must be split across passes instead: every
+    character still reaches the lens exactly once, nothing is truncated.
+    """
+    import oracle_corpus
+    from oracle_mindset_context import OracleMindsetContext
+
+    ctx = OracleMindsetContext(
+        program={"name": "Matomo", "platform": "HackerOne"},
+        voice=True,
+        ttp_mode="auto",
+        mindset="paradox",
+    )
+    cap = 105_306  # the pass budget the crash was raised at
+    slices = ctx.system_prompt_slices(cap, corpus_split_oversized=True)
+
+    assert len(slices) > 1
+    assert all(len(s) <= cap for s in slices)
+    text = oracle_corpus.read_document("paradox-impossible-crossover")
+    assert not any(text in s for s in slices), "document must be split, not sent whole"
+    assert any(text[:200] in s for s in slices), "head of the document was dropped"
+    assert any(text[-200:] in s for s in slices), "tail of the document was dropped"
+    assert sum("(part " in s for s in slices) == 2, "expected two parts"
