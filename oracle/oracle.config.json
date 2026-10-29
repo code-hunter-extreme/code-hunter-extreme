@@ -1,100 +1,93 @@
 {
-  "_comment": "Oracle scan configuration. Edit this file. Run: oracle-hunter prescan --sync",
-
+  "_comment": "Synced from code-hunter shared config.json",
   "scan": {
-    "_comment_platforms": "all scans every registered source. Set a list or comma-separated string to narrow, e.g. [\"hackerone\", \"bugcrowd\"].",
     "platforms": "all",
     "refresh_cache": false,
     "cdp_port": 9227
   },
-
   "filter": {
-    "_comment_payout":   "Require at least $500 payout. 0 = no upper limit.",
-    "min_payout_usd":           500,
-    "max_payout_usd":           0,
-
-    "_comment_reports":  "<=100 resolved reports = less picked over. Programs with no report count are kept.",
-    "max_resolved_reports":     100,
-
-    "_comment_fast":     "fast_triage_only OFF — fast triage is a bonus, not a hard requirement. Triage ranker scores it.",
-    "fast_triage_only":         false,
-
-    "_comment_new":      "new_programs_only = launched within new_program_days days. new_assets scored by triage ranker (new_assets weight 0.30 in triage.yaml).",
-    "new_programs_only":        false,
-    "new_program_days":         90,
-    "recently_added_assets_only": false,
-
-    "_comment_kind":     "web2 + web3 both on. Set one to false to narrow.",
-    "web2":                     true,
-    "web3":                     true,
-
-    "_comment_pick":     "pick_per_platform = top N shown, downloaded, and hunted per platform. Set null to use global top_n instead.",
-    "pick_per_platform":        5,
-    "top_n":                    50
+    "min_payout_usd": 500,
+    "max_payout_usd": 0,
+    "max_resolved_reports": 100,
+    "fast_triage_only": false,
+    "new_programs_only": false,
+    "new_program_days": 90,
+    "web2": true,
+    "web3": true,
+    "pick_per_platform": 5,
+    "top_n": 50
   },
-
   "hunt": {
-    "auto":           false,
-    "verify":         true,
-    "cloud":          true,
-    "testnet":        false,
+    "auto": false,
+    "verify": true,
+    "cloud": true,
+    "testnet": false,
     "download_assets": true,
-    "screenshot":     true,
-    "code_lens":      true,
+    "screenshot": true,
+    "code_lens": true,
     "max_cards_per_family": 20,
     "recon_context": {
       "max_hosts": 20,
       "max_endpoints": 30
     }
   },
-
   "queue": {
-    "_comment_order":    "finish-site exhausts every company on one site, then moves on; round-robin takes the first company per site in rotation.",
-    "order":             "finish-site",
-    "_comment_parallel": "concurrent = cross-site parallelism on/off. Sequential within a site, always (one rate-limit bucket).",
-    "concurrent":        false,
-    "_comment_cap":      "cross_site_cap = max parallel sites when concurrent.",
-    "cross_site_cap":    3,
-    "_comment_count":    "default_count = programs to deep-dive when scan -N is not given (explicit --sites still overrides the count).",
-    "default_count":     5
+    "order": "finish-site",
+    "concurrent": false,
+    "cross_site_cap": 3,
+    "default_count": 5
   },
-
   "researcher": {
-    "handle": "codehunterextreme",
-    "note":   "Researcher handle used in compliance request headers"
+    "handle": "testhunter",
+    "note": "Researcher handle used in compliance request headers"
   },
-
   "quality_gates": {
-    "_comment": "INITIAL bars (docs/GATE_SPEC.md). Recalibrate after first full gate run. Gate is confidence-only, non-blocking for money.",
-    "_comment_recall": "P2-lock (doctrine #5): 1.0 = zero misses in covered classes. Machine-enforced by tests/test_p2_recall_bar.py; do not lower without a doctrine change.",
-    "gate_precision_min": 0.70,
+    "gate_precision_min": 0.7,
     "gate_recall_min": 1.0,
-    "gate_clean_fp_max": 0.10,
-    "gate_cases": 60,
-    "gate_flaw_cases": 40,
-    "gate_clean_cases": 20,
-    "review_stage1_precision": 0.70,
-    "review_stage1_window": 30,
-    "review_stage2_precision": 0.85,
-    "review_stage2_window": 60,
-    "review_stage2_max_false_confirmed": 0
+    "gate_clean_fp_max": 0.1,
+    "gate_cases": 60
   },
-
   "platform_auth": {
-    "_comment": "Policy only. Put real values in .env or an authenticated browser session, never in this file.",
-    "hackerone":  {"methods": ["api_key", "cdp_session", "public"], "api_key_env": "HACKERONE_API_KEY"},
-    "bugcrowd":   {"methods": ["cdp_session", "public"]},
-    "intigriti":  {"methods": ["api_key", "cdp_session", "public"], "api_key_env": "INTIGRITI_JWT"},
-    "yeswehack":  {"methods": ["public", "cdp_session"]},
-    "immunefi":   {"methods": ["public"]},
-    "hackenproof":{"methods": ["api_key", "cdp_session", "public"], "api_key_env": "HACKENPROOF_API_KEY"},
-    "cantina":    {"methods": ["public", "cdp_session"]},
-    "code4rena":  {"methods": ["public", "cdp_session"]},
-    "sherlock":   {"methods": ["public", "cdp_session"]},
-    "codehawks":  {"methods": ["public"]},
-    "patchstack": {"methods": ["public"]},
-    "huntr":      {"methods": ["cdp_session", "public"]},
-    "bugbase":    {"methods": ["public", "cdp_session"]},
-    "hatsfinance":{"methods": ["public", "cdp_session"]}
+    "hackerone": {
+      "methods": [
+        "api_key",
+        "cdp_session",
+        "public"
+      ],
+      "api_key_env": "HACKERONE_API_KEY"
+    },
+    "bugcrowd": {
+      "methods": [
+        "cdp_session",
+        "public"
+      ]
+    },
+    "intigriti": {
+      "methods": [
+        "api_key",
+        "cdp_session",
+        "public"
+      ],
+      "api_key_env": "INTIGRITI_JWT"
+    },
+    "yeswehack": {
+      "methods": [
+        "public",
+        "cdp_session"
+      ]
+    },
+    "immunefi": {
+      "methods": [
+        "public"
+      ]
+    },
+    "hackenproof": {
+      "methods": [
+        "api_key",
+        "cdp_session",
+        "public"
+      ],
+      "api_key_env": "HACKENPROOF_API_KEY"
+    }
   }
 }

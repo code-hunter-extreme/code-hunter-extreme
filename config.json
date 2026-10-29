@@ -1,0 +1,134 @@
+{
+  "_comment": "Shared bug-bounty pipeline config \u2014 used by Scan4Me + Oracle via code-hunter. Edit here; code-hunter syncs to each project.",
+  "researcher": {
+    "handle": "testhunter",
+    "note": "Researcher handle used in compliance request headers"
+  },
+  "api_keys": {
+    "_comment": "Set real values as env vars (priority) or here. Never commit secrets.",
+    "hackerone": {
+      "username": null,
+      "api_token": null,
+      "_env": "HACKERONE_USERNAME / HACKERONE_API_TOKEN"
+    },
+    "bugcrowd": {
+      "api_token": null,
+      "_env": "BUGCROWD_API_TOKEN"
+    },
+    "intigriti": {
+      "api_token": null,
+      "_env": "INTIGRITI_API_TOKEN"
+    },
+    "yeswehack": {
+      "api_token": null,
+      "_env": "YESWEHACK_API_TOKEN"
+    },
+    "hackenproof": {
+      "api_token": null,
+      "_env": "HACKENPROOF_API_TOKEN"
+    },
+    "openrouter": {
+      "api_key": null,
+      "_env": "OPENROUTER_API_KEY"
+    },
+    "nvidia": {
+      "api_key": null,
+      "_env": "NVIDIA_API_KEY"
+    },
+    "gemini": {
+      "api_key": null,
+      "_env": "GEMINI_API_KEY"
+    }
+  },
+  "scan4me": {
+    "use_auth": false,
+    "filters": {
+      "paid_bounties_only": true,
+      "fast_triage": {
+        "enabled": true,
+        "max_first_response_hours": 24.0
+      },
+      "attack_surface_and_scope": {
+        "prefer_large_attack_surface": true,
+        "prioritize_wildcards": true,
+        "wildcard_multiplier": 2.5
+      },
+      "freshness_and_competition": {
+        "prefer_new_companies": true,
+        "new_company_days": 90,
+        "prefer_new_assets": true,
+        "new_asset_days": 30,
+        "max_rewarded_vulnerabilities": 150
+      },
+      "payouts": {
+        "min_max_payout_usd": 1000.0,
+        "prioritize_fast_cash": true
+      },
+      "program_kind": {
+        "web2": true,
+        "web3": true
+      }
+    },
+    "platforms": {
+      "hackerone": true,
+      "bugcrowd": true,
+      "intigriti": true,
+      "yeswehack": true,
+      "federacy": false,
+      "immunefi": true,
+      "sherlock": true,
+      "pd_programs": true,
+      "bugbase": true,
+      "hackenproof": true,
+      "cantina": true,
+      "codehawks": true,
+      "patchstack": true,
+      "huntr": true
+    },
+    "ranking_weights": {
+      "payout_size": 0.35,
+      "attack_surface_size": 0.3,
+      "freshness_and_low_saturation": 0.2,
+      "triage_speed": 0.15
+    }
+  },
+  "oracle": {
+    "scan": {
+      "platforms": "all",
+      "refresh_cache": false,
+      "cdp_port": 9227
+    },
+    "filter": {
+      "min_payout_usd": 500,
+      "max_payout_usd": 0,
+      "max_resolved_reports": 100,
+      "fast_triage_only": false,
+      "new_programs_only": false,
+      "new_program_days": 90,
+      "web2": true,
+      "web3": true,
+      "pick_per_platform": 5,
+      "top_n": 50
+    },
+    "hunt": {
+      "auto": false,
+      "verify": true,
+      "cloud": true,
+      "testnet": false,
+      "download_assets": true,
+      "screenshot": true,
+      "code_lens": true,
+      "max_cards_per_family": 20,
+      "recon_context": {
+        "max_hosts": 20,
+        "max_endpoints": 30
+      }
+    },
+    "queue": {
+      "order": "finish-site",
+      "concurrent": false,
+      "cross_site_cap": 3,
+      "default_count": 5
+    }
+  }
+}
