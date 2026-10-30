@@ -201,6 +201,13 @@ def resolve_queue(
     Every *specified* value at every layer is validated — a bad config value
     raises even when a CLI flag would have overridden it (scream, don't hide).
     """
+    # Validate every specified value at each layer BEFORE merging —
+    # a bad value raises here, never falls through silently.
+    if cli is not None:
+        _clean_layer(cli, "CLI")
+    if config is not None:
+        _clean_layer(config, "config")
+
     merged: Dict[str, Any] = {
         "order": DEFAULT_ORDER,
         "concurrent": DEFAULT_CONCURRENT,

@@ -37,6 +37,34 @@ CONFIG_PATH = REPO_ROOT / "config.json"
 CONFIG_EXAMPLE_PATH = REPO_ROOT / "config.example.json"
 CACHE_DATA_DIR = REPO_ROOT / "data_cache"
 
+# ── SQL fragment validation (defense-in-depth) ──────────────────────────────
+# Dynamic SQL fragments built internally (never from user input) are validated
+# to contain only safe characters before concatenation into SQL queries.
+_SQL_FRAGMENT_RE = re.compile(r"^[A-Za-z0-9_().,<>=!+\-*/% ]+$")
+# SQL keywords that could be used for injection — none appear in our
+# internally-built fragments (COALESCE(...)=0, 1=1, deleted_timestamp=0, etc.)
+_SQL_KEYWORD_RE = re.compile(
+    r"\b(OR|AND|UNION|SELECT|INSERT|UPDATE|DELETE|DROP|EXEC|EXECUTE|"
+    r"TRUNCATE|ALTER|CREATE|GRANT|REVOKE|FROM|WHERE|HAVING|GROUP|ORDER|"
+    r"BY|LIMIT|OFFSET)\b", re.IGNORECASE,
+)
+
+
+def _validate_sql_fragment(fragment: str, origin: str) -> str:
+    """Validate that a SQL fragment contains only safe characters.
+
+    Fragments are built internally from column-existence checks, never from
+    user input. This is defense-in-depth: if a future change introduces user
+    input into a fragment, this raises loud instead of enabling injection.
+    """
+    if not _SQL_FRAGMENT_RE.match(fragment):
+        raise ValueError(f"unsafe SQL fragment in {origin}: {fragment!r}")
+    if _SQL_KEYWORD_RE.search(fragment):
+        raise ValueError(
+            f"SQL keyword found in fragment in {origin}: {fragment!r}"
+        )
+    return fragment
+
 UPSTREAM_REPO = "https://github.com/arkadiyt/bounty-targets-data.git"
 # Secondary feed: projectdiscovery/public-bugbounty-programs (machine-readable scope JSON)
 PD_PROGRAMS_REPO = "https://github.com/projectdiscovery/public-bugbounty-programs.git"
@@ -183,6 +211,15 @@ def _api_request(
         req.add_header("Authorization", f"Token {token_header}")
     opener = urllib.request.build_opener(_NoRedirectHandler)
     with opener.open(req, timeout=timeout) as resp:  # nosec B310
+        # Defense-in-depth: _NoRedirectHandler refuses 3xx responses by
+        # returning None from redirect_request, which makes urllib raise
+        # HTTPError. Verify no redirect was silently followed.
+        resp_url = getattr(resp, "geturl", lambda: url)()
+        if resp_url != url:
+            raise urllib.error.HTTPError(
+                url, resp.status, f"redirect refused: {url} -> {resp_url}",
+                resp.headers, None,
+            )
         return json.load(resp)
 
 
@@ -4142,6 +4179,11 @@ def feed_provenance(conn=None):
         _asset_live_a = (
             "a.deleted_timestamp=0" if "deleted_timestamp" in _asset_cols else "1=1"
         )
+        # Validate all dynamically-built SQL fragments before concatenation.
+        _validate_sql_fragment(_prog_live, "scan4me._prog_live")
+        _validate_sql_fragment(_prog_live_p, "scan4me._prog_live_p")
+        _validate_sql_fragment(_asset_live, "scan4me._asset_live")
+        _validate_sql_fragment(_asset_live_a, "scan4me._asset_live_a")
         try:
             n_programs = cur.execute(
                 "SELECT count(*) FROM programs WHERE " + _prog_live
