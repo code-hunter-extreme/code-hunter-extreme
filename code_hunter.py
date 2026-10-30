@@ -38,6 +38,8 @@ import os
 import subprocess
 import sys
 import time
+import urllib.request
+import urllib.error
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -85,6 +87,121 @@ def _check_import(module_name: str) -> bool:
         return True
     except Exception:
         return False
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PLATFORM API KEY CHECK + CDP AUTO-START
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Platform API key env var names (checked in priority order)
+PLATFORM_KEY_ENV_VARS = {
+    "hackerone": ["HACKERONE_API_TOKEN", "HACKERONE_API_KEY", "HACKERONE_USERNAME"],
+    "bugcrowd": ["BUGCROWD_API_TOKEN"],
+    "intigriti": ["INTIGRITI_API_TOKEN", "INTIGRITI_JWT"],
+    "yeswehack": ["YESWEHACK_API_TOKEN"],
+    "hackenproof": ["HACKENPROOF_API_KEY"],
+    "immunefi": ["IMMUNEFI_API_TOKEN"],
+}
+
+
+def _check_platform_api_keys() -> Dict[str, bool]:
+    """Check which platforms have API keys configured.
+
+    Returns a dict mapping platform → True if a key env var is set and non-empty.
+    """
+    result: Dict[str, bool] = {}
+    for platform, env_vars in PLATFORM_KEY_ENV_VARS.items():
+        has_key = any(
+            os.environ.get(var, "").strip()
+            for var in env_vars
+        )
+        result[platform] = has_key
+    return result
+
+
+def _any_platform_keys_present() -> bool:
+    """True if at least one platform API key is configured."""
+    return any(_check_platform_api_keys().values())
+
+
+def _start_chromium_cdp(port: int = 9227, timeout: int = 20) -> Optional[subprocess.Popen]:
+    """Start Chromium with remote debugging on the given CDP port.
+
+    Returns the Popen process handle, or None if Chromium could not be started.
+    The caller is responsible for terminating the process when done.
+    """
+    chromium_cmd = [
+        "chromium-browser",
+        f"--remote-debugging-port={port}",
+        f"--user-data-dir=/tmp/chrome-cdp-{port}",
+        "--no-first-run", "--no-sandbox", "--headless=new",
+    ]
+
+    try:
+        proc = subprocess.Popen(
+            chromium_cmd,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    except FileNotFoundError:
+        # Try chromium without -browser suffix
+        chromium_cmd[0] = "chromium"
+        try:
+            proc = subprocess.Popen(
+                chromium_cmd,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+        except FileNotFoundError:
+            console.print(f"[yellow]⚠ Chromium not found on PATH[/yellow]")
+            return None
+        except Exception as exc:
+            console.print(f"[yellow]⚠ Could not start Chromium: {exc}[/yellow]")
+            return None
+    except Exception as exc:
+        console.print(f"[yellow]⚠ Could not start Chromium: {exc}[/yellow]")
+        return None
+
+    # Wait for CDP port to respond — Chromium usually takes 2-5 seconds
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            req = urllib.request.Request(
+                f"http://localhost:{port}/json/version",
+                headers={"User-Agent": "code-hunter/1.0"},
+            )
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                if resp.status == 200:
+                    console.print(f"[green]✓[/green] CDP Chromium started on port {port}")
+                    return proc
+        except Exception:
+            pass
+        time.sleep(1)
+
+    # CDP didn't respond — kill Chromium
+    try:
+        proc.terminate()
+        proc.wait(timeout=5)
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+    console.print(f"[yellow]⚠ CDP Chromium did not respond on port {port}[/yellow]")
+    return None
+
+
+def _stop_chromium_cdp(proc: Optional[subprocess.Popen]) -> None:
+    """Stop a previously started Chromium CDP process."""
+    if proc is None:
+        return
+    try:
+        proc.terminate()
+        proc.wait(timeout=10)
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
 
 
 def _health(name: str, root: Path, key_files: List[str]) -> Dict[str, Any]:
@@ -146,8 +263,8 @@ def cmd_scan(args: argparse.Namespace) -> int:
     # Ensure shared config is synced to Scan4Me's config.json
     try:
         _sync_config_to_projects(_load_shared_config())
-    except Exception:
-        pass
+    except Exception as exc:
+        console.print(f"[yellow]⚠ Config sync warning: {exc}[/yellow]")
     scan4me = SCAN4ME_ROOT / "scan4me.py"
     if not scan4me.is_file():
         console.print("[red]✗[/red] scan4me.py not found at "
@@ -157,7 +274,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
     if args.sub:
         cmd.append(args.sub)
     cmd.extend(_scan4me_flags_for(args.sub, args))
-    if args.domain:
+    if args.domain and args.sub == "check":
         cmd.append(args.domain)
     try:
         cp = _run(cmd, cwd=SCAN4ME_ROOT, timeout=args.timeout)
@@ -210,6 +327,7 @@ def _oracle_flags_for(sub: str, args: argparse.Namespace) -> List[str]:
         add("no-resume", getattr(args, "no_resume", False))
         add("skip-download", getattr(args, "skip_download", False))
         add("controlled", getattr(args, "controlled", True))
+        add("no-controlled", getattr(args, "no_controlled", False))
         add("no-cloud", getattr(args, "no_cloud", False))
         add("model", getattr(args, "model", None))
         add("researcher", getattr(args, "researcher", None))
@@ -247,8 +365,8 @@ def cmd_oracle(args: argparse.Namespace) -> int:
     # Ensure shared config is synced to Oracle's oracle.config.json
     try:
         _sync_config_to_projects(_load_shared_config())
-    except Exception:
-        pass
+    except Exception as exc:
+        console.print(f"[yellow]⚠ Config sync warning: {exc}[/yellow]")
     hunter = ORACLE_ROOT / "oracle_hunter.py"
     if not hunter.is_file():
         console.print("[red]✗[/red] oracle_hunter.py not found at "
@@ -368,7 +486,7 @@ def cmd_omni(args: argparse.Namespace) -> int:
 # PIPELINE — end-to-end money pipeline
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _pipeline_step(console: Console, label: str, cmd: List[str], cwd: Path,
+def _pipeline_step(label: str, cmd: List[str], cwd: Path,
                    timeout: int) -> Dict[str, Any]:
     """Run one pipeline step, return result dict."""
     start = time.monotonic()
@@ -395,10 +513,19 @@ def cmd_pipeline(args: argparse.Namespace) -> int:
         console.print("[yellow]Use --run to execute the full pipeline.[/yellow]")
         return 0
 
+    # Pre-flight: verify entry points exist
+    for entry, label in ((SCAN4ME_ROOT / "scan4me.py", "scan4me.py"),
+                         (ORACLE_ROOT / "oracle_hunter.py", "oracle_hunter.py")):
+        if not entry.is_file():
+            console.print(f"[red]✗[/red] {label} not found at {entry}")
+            return 1
+
     limit = args.limit
     top_n = args.top_n
     timeout = args.timeout
     no_cloud = args.no_cloud
+
+    cdp_proc: Optional[subprocess.Popen] = None
 
     steps: List[Dict[str, Any]] = []
 
@@ -412,7 +539,7 @@ def cmd_pipeline(args: argparse.Namespace) -> int:
         r = _pipeline_step(
             "scan4me sync",
             [sys.executable, "scan4me.py", "sync"]
-            + (["--no-cloud"] if no_cloud else []),
+            + (["--offline"] if no_cloud else []),
             SCAN4ME_ROOT, timeout,
         )
         steps.append(r)
@@ -444,12 +571,46 @@ def cmd_pipeline(args: argparse.Namespace) -> int:
                       f"({r['duration_s']}s)")
 
         # Step 3: Oracle scan (-N deep-dive + download)
+        # Decide verification strategy based on platform API keys:
+        #   - Keys present → run scan normally (CDP optional for download)
+        #   - No keys → run with --no-cloud (skip API re-scan that fails closed)
+        #     and start CDP as fallback for page content download
         t = progress.add_task("Oracle: scan + deep-dive + download…", total=None)
+        platform_keys = _check_platform_api_keys()
+        has_keys = any(platform_keys.values())
+        key_status = ", ".join(
+            f"{p}:{'✓' if v else '✗'}" for p, v in platform_keys.items()
+        )
+        console.print(f"[dim]Platform API keys: {key_status}[/dim]")
+
+        scan_cmd = [sys.executable, "oracle_hunter.py", "scan",
+                    "-N", str(top_n), "--download"]
+
+        cdp_started = False
+        if not has_keys and not no_cloud:
+            console.print("[yellow]⚠ No platform API keys present — "
+                          "running scan with --no-cloud (API re-scan skipped), "
+                          "starting CDP Chromium for download fallback[/yellow]")
+            scan_cmd.append("--no-cloud")
+            cdp_proc = _start_chromium_cdp(port=9227)
+            if cdp_proc is not None:
+                cdp_started = True
+                scan_cmd.extend(["--cdp-port", "9227"])
+            else:
+                console.print("[red]⚠ CDP start failed — scan will use "
+                              "Crawl4AI / plain GET fallback[/red]")
+        elif has_keys:
+            console.print("[green]✓ Platform API keys present — "
+                          "CDP can stay offline[/green]")
+            if not no_cloud:
+                cdp_proc = _start_chromium_cdp(port=9227)
+                if cdp_proc is not None:
+                    cdp_started = True
+                    scan_cmd.extend(["--cdp-port", "9227"])
+
         r = _pipeline_step(
             "oracle scan",
-            [sys.executable, "oracle_hunter.py", "scan",
-             "-N", str(top_n), "--download"]
-            + (["--no-cloud"] if no_cloud else []),
+            scan_cmd,
             ORACLE_ROOT, timeout,
         )
         steps.append(r)
@@ -457,27 +618,34 @@ def cmd_pipeline(args: argparse.Namespace) -> int:
         if not r["ok"]:
             console.print(f"[red]✗[/red] {r['label']} failed: "
                           f"{r['stderr'][:200]}")
+            _stop_chromium_cdp(cdp_proc)
             return 1
         console.print(f"[green]✓[/green] {r['label']} done "
                       f"({r['duration_s']}s)")
 
         # Step 4: Oracle queue --execute
         t = progress.add_task("Oracle: queue + execute hunts…", total=None)
+        queue_cmd = [sys.executable, "oracle_hunter.py", "queue", "--execute",
+                     "--max-items", str(top_n)]
+        if not has_keys or no_cloud:
+            queue_cmd.append("--no-cloud")
         r = _pipeline_step(
             "oracle queue --execute",
-            [sys.executable, "oracle_hunter.py", "queue", "--execute",
-             "--max-items", str(top_n)]
-            + (["--no-cloud"] if no_cloud else []),
+            queue_cmd,
             ORACLE_ROOT, timeout,
         )
         steps.append(r)
         progress.update(t, completed=1)
         if not r["ok"]:
-            console.print(f"[red]✗[/red] {r['label']} failed: "
+            console.print(f"[yellow]⚠[/yellow] {r['label']} had issues: "
                           f"{r['stderr'][:200]}")
-            return 1
-        console.print(f"[green]✓[/green] {r['label']} done "
-                      f"({r['duration_s']}s)")
+            console.print("[yellow]   Continuing to report step...[/yellow]")
+        else:
+            console.print(f"[green]✓[/green] {r['label']} done "
+                          f"({r['duration_s']}s)")
+
+        # Stop CDP after queue completes — hunts are done
+        _stop_chromium_cdp(cdp_proc)
 
         # Step 5: Generate consolidated report
         t = progress.add_task("Generating consolidated report…", total=None)
@@ -568,6 +736,27 @@ def cmd_status(args: argparse.Namespace) -> int:
     tt.add_row("OmniCLI", "~305 + 53 subtests", "[yellow]mostly[/yellow] "
                "(P4 gate needs qualifying run)")
     console.print(tt)
+
+    # Platform API key status
+    console.print("\n[bold]Platform API Key Status[/bold]")
+    platform_keys = _check_platform_api_keys()
+    kt = Table(title="Platform Keys")
+    kt.add_column("Platform", style="bold")
+    kt.add_column("Key Configured", justify="center")
+    any_keys = False
+    for platform, has_key in sorted(platform_keys.items()):
+        any_keys = any_keys or has_key
+        kt.add_row(
+            platform,
+            "[green]✓[/green]" if has_key else "[red]✗[/red]",
+        )
+    console.print(kt)
+    if not any_keys:
+        console.print("[yellow]⚠ No platform API keys configured — "
+                      "CDP Chromium will be auto-started for verification[/yellow]")
+    else:
+        console.print("[green]✓ Platform API keys present — "
+                      "CDP can stay offline[/green]")
 
     if all_healthy:
         console.print("\n[bold green]All three systems present and importable.[/bold green]")
@@ -970,7 +1159,7 @@ def _omni_local_ground(idea: str, workspace: Path = ROOT) -> Dict[str, Any]:
 
     workspace_map = []
     for f in sorted(workspace.rglob("*")):
-        if f.is_file() and not f.name.startswith("."):
+        if f.is_file() and not f.name.startswith(".") and ".git" not in f.parts:
             workspace_map.append(str(f.relative_to(workspace)))
 
     # If no files scored above the minimum threshold, we need external
@@ -1361,7 +1550,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_oracle.add_argument("--execute", action="store_true")
     p_oracle.add_argument("--no-resume", action="store_true")
     p_oracle.add_argument("--skip-download", action="store_true")
-    p_oracle.add_argument("--controlled", action="store_true", default=True)
+    p_oracle.add_argument("--controlled", action="store_true", default=True,
+                          help="Enable controlled/low-rate recon (default: on)")
+    p_oracle.add_argument("--no-controlled", action="store_true",
+                          help="Disable controlled/low-rate recon")
     p_oracle.add_argument("--testnet", action="store_true")
     p_oracle.add_argument("--code", action="store_true")
     p_oracle.add_argument("--voice", action="store_true")
