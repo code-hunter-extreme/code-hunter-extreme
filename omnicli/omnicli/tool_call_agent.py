@@ -42,7 +42,7 @@ class ToolCallAgent(BaseAgent):
         default=None, description="Prompt for the next action"
     )
 
-    llm: Optional[OmniClient] = Field(default=None, description="LLM client")
+    llm: Any = Field(default=None, description="LLM client instance")
     provider: Optional[str] = Field(
         default=None, description="LLM provider name (uses config default if None)"
     )
