@@ -45,7 +45,14 @@
     "gate_precision_min": 0.7,
     "gate_recall_min": 1.0,
     "gate_clean_fp_max": 0.1,
-    "gate_cases": 60
+    "gate_cases": 60,
+    "gate_flaw_cases": 40,
+    "gate_clean_cases": 20,
+    "review_stage1_precision": 0.7,
+    "review_stage1_window": 30,
+    "review_stage2_precision": 0.85,
+    "review_stage2_window": 60,
+    "review_stage2_max_false_confirmed": 0
   },
   "platform_auth": {
     "hackerone": {
@@ -88,6 +95,52 @@
         "public"
       ],
       "api_key_env": "HACKENPROOF_API_KEY"
+    },
+    "cantina": {
+      "methods": [
+        "public",
+        "cdp_session"
+      ]
+    },
+    "code4rena": {
+      "methods": [
+        "public",
+        "cdp_session"
+      ]
+    },
+    "sherlock": {
+      "methods": [
+        "public",
+        "cdp_session"
+      ]
+    },
+    "codehawks": {
+      "methods": [
+        "public"
+      ]
+    },
+    "patchstack": {
+      "methods": [
+        "public"
+      ]
+    },
+    "huntr": {
+      "methods": [
+        "cdp_session",
+        "public"
+      ]
+    },
+    "bugbase": {
+      "methods": [
+        "public",
+        "cdp_session"
+      ]
+    },
+    "hatsfinance": {
+      "methods": [
+        "public",
+        "cdp_session"
+      ]
     }
   }
 }

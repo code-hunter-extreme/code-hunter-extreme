@@ -1080,50 +1080,350 @@ def oracle_rescan(
     """Oracle-owned re-scan for the verify pass.
 
     HackerOne programs are fetched from HackerOne's own authenticated Hacker
-    API with Oracle's credentials, never from Scan4Me's DB copy. Other
-    platforms have no Oracle-side API/browser adapter yet: they return no
-    fresh program, explicitly marked ``independent: false`` with source
+    API with Oracle's credentials, never from Scan4Me's DB copy. When API
+    credentials are missing or rejected, the fallback is the operator's
+    signed-in CDP browser session (``_cdp_rescan_program``) — the browser IS
+    the credential. If neither path can produce a fresh program, the result
+    is a clean miss: the program stays unverified, and the scan continues.
+
+    Other platforms have no Oracle-side API/browser adapter yet: they return
+    no fresh program, explicitly marked ``independent: false`` with source
     ``no-oracle-adapter``, and therefore cannot verify. The Scan4Me bridge
-    is never read here — a DB copy cannot corroborate itself. HackerOne
-    credentials missing or rejected raise (H1AuthError) — an auth failure
-    must never masquerade as a vanished program.
+    is never read here — a DB copy cannot corroborate itself.
     """
     platform = str(prog.get("platform") or "").strip()
     handle = str(prog.get("handle") or prog.get("name") or "").strip()
-    if platform.lower() == "hackerone":
-        import oracle_h1_api as h1
+    if platform.lower() != "hackerone":
+        return None, {
+            "source": "no-oracle-adapter",
+            "independent": False,
+            "platform": platform,
+            "handle": handle,
+            "found": False,
+        }
 
+    import oracle_h1_api as h1
+
+    fresh: Optional[Dict[str, Any]] = None
+    via_cdp = False
+    try:
         fresh = h1.fetch_program(handle)
-        if fresh is None:
-            return None, {
-                "source": "hackerone-api-authenticated",
-                "independent": True,
-                "platform": platform,
-                "handle": handle,
-                "found": False,
-            }
-        meta = fresh.pop("_oracle_rescan", {})
-        meta.setdefault("source", "hackerone-api-authenticated")
-        meta["independent"] = True
-        # OOS is safety-critical: union the platform's explicit fresh OOS with
-        # known snapshot OOS. Never union in-scope assets (that would revive
-        # revoked scope).
-        known_oos = {
-            str(x).strip() for x in (prog.get("out_of_scope") or []) if str(x).strip()
+    except h1.H1AuthError:
+        # No API credentials — fall back to the signed-in browser session.
+        fresh = _cdp_rescan_program(handle)
+        via_cdp = fresh is not None
+
+    if fresh is None:
+        return None, {
+            "source": "hackerone-api-authenticated",
+            "independent": True,
+            "platform": platform,
+            "handle": handle,
+            "found": False,
+            **({"via_cdp": True} if via_cdp else {}),
         }
-        fresh_oos = {
-            str(x).strip() for x in (fresh.get("out_of_scope") or []) if str(x).strip()
-        }
-        if known_oos - fresh_oos:
-            fresh["out_of_scope"] = sorted(known_oos | fresh_oos)
-            meta["out_of_scope_union"] = sorted(known_oos - fresh_oos)
-        return fresh, meta
-    return None, {
-        "source": "no-oracle-adapter",
-        "independent": False,
-        "platform": platform,
+
+    meta = fresh.pop("_oracle_rescan", {})
+    meta.setdefault("source", "hackerone-api-authenticated")
+    meta["independent"] = True
+    # OOS is safety-critical: union the platform's explicit fresh OOS with
+    # known snapshot OOS. Never union in-scope assets (that would revive
+    # revoked scope).
+    known_oos = {
+        str(x).strip() for x in (prog.get("out_of_scope") or []) if str(x).strip()
+    }
+    fresh_oos = {
+        str(x).strip() for x in (fresh.get("out_of_scope") or []) if str(x).strip()
+    }
+    if known_oos - fresh_oos:
+        fresh["out_of_scope"] = sorted(known_oos | fresh_oos)
+        meta["out_of_scope_union"] = sorted(known_oos - fresh_oos)
+    return fresh, meta
+
+
+# Persistent signed-in profile for the CDP re-scan browser. The operator
+# signs in to HackerOne once; the session survives across runs. NEVER a
+# throwaway temp dir — a fresh profile is a signed-out profile.
+_CDP_PROFILE_DIR = Path.home() / ".oracle-chromium-cdp"
+_CDP_DEFAULT_PORT = 9227
+
+
+def _cdp_tabs(port: int) -> Optional[List[Dict[str, Any]]]:
+    """Return the CDP tab list, or None when no browser answers the port."""
+    try:
+        raw = urllib.request.urlopen(
+            f"http://localhost:{port}/json", timeout=3
+        ).read()
+        tabs = json.loads(raw)
+        return tabs if isinstance(tabs, list) else None
+    except Exception:
+        return None
+
+
+def _cdp_ensure_browser(port: int = _CDP_DEFAULT_PORT) -> Optional[List[Dict[str, Any]]]:
+    """Return CDP tabs, starting the operator's persistent-profile browser if needed.
+
+    The browser runs with the PERSISTENT profile at ``~/.oracle-chromium-cdp``
+    so a one-time HackerOne sign-in is enough. A profile that already holds a
+    session starts headless; a fresh profile starts headed so the operator can
+    sign in. A temp/throwaway profile is never used: a signed-out browser
+    cannot verify scope from the platform.
+    """
+    import subprocess as _sp
+    import time as _time
+
+    tabs = _cdp_tabs(port)
+    if tabs is not None:
+        return tabs
+
+    _CDP_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        profile_has_state = any(_CDP_PROFILE_DIR.iterdir())
+    except OSError:
+        profile_has_state = True  # unreadable ≠ safe to assume fresh; stay headless
+    headless_flags = ["--headless=new"] if profile_has_state else []
+
+    base_flags = [
+        f"--remote-debugging-port={port}",
+        f"--user-data-dir={_CDP_PROFILE_DIR}",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--disable-extensions",
+        "--disable-gpu",
+    ]
+    for binary in (
+        "chromium-browser",
+        "chromium",
+        "google-chrome-stable",
+        "google-chrome",
+    ):
+        try:
+            proc = _sp.Popen(
+                [binary, *base_flags, *headless_flags, "about:blank"],
+                stdout=_sp.DEVNULL,
+                stderr=_sp.DEVNULL,
+            )
+        except (FileNotFoundError, OSError):
+            continue
+        deadline = _time.monotonic() + 30.0
+        while _time.monotonic() < deadline:
+            tabs = _cdp_tabs(port)
+            if tabs is not None:
+                return tabs
+            if proc.poll() is not None:
+                break  # this binary died; try the next
+            _time.sleep(1.0)
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+    return None
+
+
+def _cdp_call(
+    ws: Any,
+    msg_id: int,
+    method: str,
+    params: Dict[str, Any],
+    deadline_s: float = 15.0,
+) -> Optional[Dict[str, Any]]:
+    """Send one CDP command; read replies until the response with msg_id arrives.
+
+    CDP streams interleave protocol events with command responses, so a
+    single recv() is NOT guaranteed to return the reply for the command just
+    sent. This loops with a deadline and returns the matching response, or
+    None on timeout / transport failure.
+    """
+    import time as _time
+
+    try:
+        ws.send(json.dumps({"id": msg_id, "method": method, "params": params}))
+    except Exception:
+        return None
+    deadline = _time.monotonic() + deadline_s
+    while _time.monotonic() < deadline:
+        try:
+            ws.settimeout(max(0.1, deadline - _time.monotonic()))
+            raw = ws.recv()
+        except Exception:
+            return None
+        try:
+            reply = json.loads(raw)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(reply, dict) and reply.get("id") == msg_id:
+            return reply
+    return None
+
+
+def _extract_embedded_scope_records(raw_json: Optional[str]) -> List[Dict[str, Any]]:
+    """Scope records from HackerOne's own embedded page JSON, or [].
+
+    Only records carrying HackerOne's structured scope schema
+    (``asset_identifier`` + ``asset_type`` — the same field names its API
+    returns) are accepted. Raw page text is NEVER scraped into scope: a URL
+    that merely appears on the page is not proof it is in scope, and treating
+    it as scope would test assets nobody authorized.
+    """
+    if not raw_json:
+        return []
+    try:
+        data = json.loads(raw_json)
+    except (TypeError, ValueError):
+        return []
+
+    found: List[Dict[str, Any]] = []
+    seen: set = set()
+
+    def walk(node: Any) -> None:
+        if isinstance(node, dict):
+            ident = node.get("asset_identifier")
+            atype = node.get("asset_type")
+            if (
+                isinstance(ident, str)
+                and ident.strip()
+                and isinstance(atype, str)
+                and atype.strip()
+            ):
+                key = (ident.strip().lower(), atype.strip().lower())
+                if key not in seen:
+                    seen.add(key)
+                    found.append(
+                        {
+                            "asset_identifier": ident.strip(),
+                            "asset_type": atype.strip(),
+                        }
+                    )
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    walk(data)
+    return found
+
+
+def _cdp_rescan_program(handle: str) -> Optional[Dict[str, Any]]:
+    """Fetch a HackerOne program through the operator's signed-in browser.
+
+    Uses the persistent CDP profile (``~/.oracle-chromium-cdp``) so a
+    one-time HackerOne sign-in survives across re-scans. Only scope records
+    embedded by HackerOne itself (structured JSON on the page, the platform's
+    own ``asset_identifier`` / ``asset_type`` schema) are accepted; raw page
+    text is never scraped into scope. Returns a Scan4Me-shaped program dict,
+    or None when the browser is unavailable, the page cannot load, or no
+    structured scope can be read (fail closed — the program stays unverified).
+    """
+    import time as _time
+
+    try:
+        import websocket
+    except ImportError:
+        return None  # websocket-client not installed; CDP path unavailable
+
+    port = _CDP_DEFAULT_PORT
+    tabs = _cdp_ensure_browser(port)
+    if not tabs:
+        return None
+
+    # Prefer an existing HackerOne tab (already signed in); else any page.
+    page_tab = next(
+        (
+            t
+            for t in tabs
+            if t.get("type") == "page"
+            and "hackerone.com" in str(t.get("url") or "")
+        ),
+        None,
+    )
+    if page_tab is None:
+        page_tab = next((t for t in tabs if t.get("type") == "page"), None)
+    if page_tab is None or not page_tab.get("webSocketDebuggerUrl"):
+        return None
+
+    try:
+        ws = websocket.create_connection(
+            page_tab["webSocketDebuggerUrl"], timeout=10
+        )
+    except Exception:
+        return None
+
+    try:
+        nav = _cdp_call(
+            ws,
+            1,
+            "Page.navigate",
+            {"url": f"https://hackerone.com/programs/{handle}"},
+            deadline_s=10.0,
+        )
+        if nav is None:
+            return None
+        # Let the SPA hydrate before reading embedded payloads.
+        _time.sleep(4)
+
+        eval_reply = _cdp_call(
+            ws,
+            2,
+            "Runtime.evaluate",
+            {
+                "expression": (
+                    "(function(){"
+                    "var out={url:location.href,title:document.title,"
+                    "next:null,apollo:null};"
+                    "try{var n=document.getElementById('__NEXT_DATA__');"
+                    "if(n){out.next=n.textContent.slice(0,300000);}}catch(e){}"
+                    "try{if(window.__APOLLO_STATE__){"
+                    "out.apollo=JSON.stringify(window.__APOLLO_STATE__)"
+                    ".slice(0,300000);}}catch(e){}"
+                    "return JSON.stringify(out);"
+                    "})()"
+                ),
+                "returnByValue": True,
+            },
+            deadline_s=15.0,
+        )
+    finally:
+        try:
+            ws.close()
+        except Exception:
+            pass
+
+    if eval_reply is None:
+        return None
+    raw_value = eval_reply.get("result", {}).get("result", {}).get("value") or ""
+    try:
+        page_state = json.loads(raw_value)
+    except (TypeError, ValueError):
+        return None
+
+    title = str(page_state.get("title") or "").lower()
+    url = str(page_state.get("url") or "").lower()
+    if "not found" in title or "/users/sign_in" in url or "/login" in url:
+        # The program page did not load for this session (missing program or
+        # not signed in). Fail closed.
+        return None
+
+    scopes = _extract_embedded_scope_records(page_state.get("next"))
+    if not scopes:
+        scopes = _extract_embedded_scope_records(page_state.get("apollo"))
+    if not scopes:
+        # No structured scope on the page — never guess from raw text.
+        return None
+
+    return {
+        "name": handle,
         "handle": handle,
-        "found": False,
+        "platform": "hackerone",
+        "structured_scopes": scopes,
+        "_oracle_rescan": {
+            "source": "hackerone-cdp-browser",
+            "independent": True,
+            "platform": "hackerone",
+            "handle": handle,
+            "via_cdp": True,
+            "scope_records": len(scopes),
+        },
     }
 
 

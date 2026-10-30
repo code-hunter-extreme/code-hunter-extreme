@@ -127,14 +127,26 @@ def _any_platform_keys_present() -> bool:
 def _start_chromium_cdp(port: int = 9227, timeout: int = 20) -> Optional[subprocess.Popen]:
     """Start Chromium with remote debugging on the given CDP port.
 
+    Uses the SAME persistent profile as oracle_intake's CDP re-scan
+    (``~/.oracle-chromium-cdp``): a one-time sign-in to HackerOne survives
+    across runs. A temp profile is never used — a signed-out browser cannot
+    fetch authenticated scope.
+
     Returns the Popen process handle, or None if Chromium could not be started.
     The caller is responsible for terminating the process when done.
     """
+    profile_dir = Path.home() / ".oracle-chromium-cdp"
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        profile_has_state = any(profile_dir.iterdir())
+    except OSError:
+        profile_has_state = True
+    headless_flags = ["--headless=new"] if profile_has_state else []
     chromium_cmd = [
         "chromium-browser",
         f"--remote-debugging-port={port}",
-        f"--user-data-dir=/tmp/chrome-cdp-{port}",
-        "--no-first-run", "--no-sandbox", "--headless=new",
+        f"--user-data-dir={profile_dir}",
+        "--no-first-run", "--no-sandbox", *headless_flags,
     ]
 
     try:
@@ -571,10 +583,15 @@ def cmd_pipeline(args: argparse.Namespace) -> int:
                       f"({r['duration_s']}s)")
 
         # Step 3: Oracle scan (-N deep-dive + download)
-        # Decide verification strategy based on platform API keys:
-        #   - Keys present → run scan normally (CDP optional for download)
-        #   - No keys → run with --no-cloud (skip API re-scan that fails closed)
-        #     and start CDP as fallback for page content download
+        # Verification strategy:
+        #   - Explicit --no-cloud → scan offline (rescan seam disabled).
+        #   - API keys present    → scan normally (API re-scan path).
+        #   - No keys             → scan normally WITHOUT --no-cloud so
+        #     oracle_rescan runs and falls back to the operator's signed-in
+        #     CDP browser session. oracle_intake owns starting that browser
+        #     with the persistent profile — the pipeline must NOT start its
+        #     own browser here (a temp-profile browser on the same port would
+        #     shadow the signed-in one).
         t = progress.add_task("Oracle: scan + deep-dive + download…", total=None)
         platform_keys = _check_platform_api_keys()
         has_keys = any(platform_keys.values())
@@ -585,28 +602,19 @@ def cmd_pipeline(args: argparse.Namespace) -> int:
 
         scan_cmd = [sys.executable, "oracle_hunter.py", "scan",
                     "-N", str(top_n), "--download"]
-
-        cdp_started = False
-        if not has_keys and not no_cloud:
-            console.print("[yellow]⚠ No platform API keys present — "
-                          "running scan with --no-cloud (API re-scan skipped), "
-                          "starting CDP Chromium for download fallback[/yellow]")
+        cdp_proc = None
+        if no_cloud:
             scan_cmd.append("--no-cloud")
-            cdp_proc = _start_chromium_cdp(port=9227)
-            if cdp_proc is not None:
-                cdp_started = True
-                scan_cmd.extend(["--cdp-port", "9227"])
-            else:
-                console.print("[red]⚠ CDP start failed — scan will use "
-                              "Crawl4AI / plain GET fallback[/red]")
+            console.print("[yellow]⚠ --no-cloud: scan runs offline; no "
+                          "program can verify until re-scanned online.[/yellow]")
         elif has_keys:
             console.print("[green]✓ Platform API keys present — "
-                          "CDP can stay offline[/green]")
-            if not no_cloud:
-                cdp_proc = _start_chromium_cdp(port=9227)
-                if cdp_proc is not None:
-                    cdp_started = True
-                    scan_cmd.extend(["--cdp-port", "9227"])
+                          "API re-scan will verify scope[/green]")
+        else:
+            console.print("[yellow]⚠ No platform API keys — oracle_rescan "
+                          "will use the signed-in CDP browser session "
+                          "(~/.oracle-chromium-cdp). Sign in to HackerOne "
+                          "once; the session persists.[/yellow]")
 
         r = _pipeline_step(
             "oracle scan",
@@ -627,7 +635,7 @@ def cmd_pipeline(args: argparse.Namespace) -> int:
         t = progress.add_task("Oracle: queue + execute hunts…", total=None)
         queue_cmd = [sys.executable, "oracle_hunter.py", "queue", "--execute",
                      "--max-items", str(top_n)]
-        if not has_keys or no_cloud:
+        if no_cloud:
             queue_cmd.append("--no-cloud")
         r = _pipeline_step(
             "oracle queue --execute",
@@ -644,7 +652,9 @@ def cmd_pipeline(args: argparse.Namespace) -> int:
             console.print(f"[green]✓[/green] {r['label']} done "
                           f"({r['duration_s']}s)")
 
-        # Stop CDP after queue completes — hunts are done
+        # Stop any CDP browser the pipeline itself started (there is none
+        # today — oracle_intake owns the browser lifecycle — but keep the
+        # cleanup symmetric with future changes).
         _stop_chromium_cdp(cdp_proc)
 
         # Step 5: Generate consolidated report
@@ -985,6 +995,10 @@ def _sync_config_to_projects(cfg: Dict[str, Any]) -> None:
         "quality_gates": {
             "gate_precision_min": 0.70, "gate_recall_min": 1.0,
             "gate_clean_fp_max": 0.10, "gate_cases": 60,
+            "gate_flaw_cases": 40, "gate_clean_cases": 20,
+            "review_stage1_precision": 0.70, "review_stage1_window": 30,
+            "review_stage2_precision": 0.85, "review_stage2_window": 60,
+            "review_stage2_max_false_confirmed": 0,
         },
         "platform_auth": {
             "hackerone": {"methods": ["api_key", "cdp_session", "public"],
@@ -996,6 +1010,14 @@ def _sync_config_to_projects(cfg: Dict[str, Any]) -> None:
             "immunefi": {"methods": ["public"]},
             "hackenproof": {"methods": ["api_key", "cdp_session", "public"],
                             "api_key_env": "HACKENPROOF_API_KEY"},
+            "cantina": {"methods": ["public", "cdp_session"]},
+            "code4rena": {"methods": ["public", "cdp_session"]},
+            "sherlock": {"methods": ["public", "cdp_session"]},
+            "codehawks": {"methods": ["public"]},
+            "patchstack": {"methods": ["public"]},
+            "huntr": {"methods": ["cdp_session", "public"]},
+            "bugbase": {"methods": ["public", "cdp_session"]},
+            "hatsfinance": {"methods": ["public", "cdp_session"]},
         },
     }
     (ORACLE_ROOT / "oracle.config.json").write_text(

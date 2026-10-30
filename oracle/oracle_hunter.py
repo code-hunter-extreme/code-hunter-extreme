@@ -6994,6 +6994,46 @@ def cmd_scan(args):
     )
     if prescan_file is None:
         _die("No prescan report found — run: oracle-hunter prescan (or --prescan)")
+
+    # ── preflight: a credential path must exist for HackerOne programs ─────
+    # The verify pass re-scans each program from the platform's own source.
+    # HackerOne re-scan uses Oracle's authenticated API when keys are set;
+    # otherwise the operator's signed-in CDP browser (persistent profile at
+    # ~/.oracle-chromium-cdp) is the credential. With neither path, every
+    # HackerOne program would land unverified — fail loud before dispatch.
+    if not no_cloud:
+        _prescan_progs: list = []
+        try:
+            _prescan_progs = json.loads(
+                Path(prescan_file).read_text(encoding="utf-8")
+            ).get("programs", [])
+        except (OSError, ValueError):
+            _prescan_progs = []
+        _has_h1 = any(
+            str((p or {}).get("platform") or "").strip().lower() == "hackerone"
+            for p in _prescan_progs
+            if isinstance(p, dict)
+        )
+        if _has_h1:
+            import oracle_h1_api as _h1
+
+            _user, _token = _h1.credentials()
+            if not _user or not _token:
+                _cdp_tabs = _intake._cdp_tabs(_intake._CDP_DEFAULT_PORT)
+                if _cdp_tabs is None:
+                    _cdp_tabs = _intake._cdp_ensure_browser()
+                if not _cdp_tabs:
+                    _die(
+                        "No Oracle re-scan credential path: HackerOne API keys "
+                        "are not set (HACKERONE_USERNAME / HACKERONE_API_TOKEN) "
+                        "and no CDP browser is reachable on port 9227.\n"
+                        "Either set the API keys, or start a browser, sign in "
+                        "to HackerOne, and re-run:\n"
+                        "  chromium-browser --remote-debugging-port=9227 "
+                        f"--user-data-dir={Path.home() / '.oracle-chromium-cdp'} "
+                        "https://hackerone.com"
+                    )
+
     _info(f"Verifying prescan: {prescan_file}")
     try:
         report = _intake.run_scan(

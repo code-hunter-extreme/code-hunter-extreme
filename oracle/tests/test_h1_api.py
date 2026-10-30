@@ -329,21 +329,12 @@ def test_scan_records_independent_rescan_and_propagates_failure(tmp_path, monkey
         )
 
 
-def test_product_scan_without_h1_credentials_fails_before_dispatch(
-    tmp_path, monkeypatch
-):
-    import types
+def _h1_prescan(tmp_path):
+    import json as _json
 
-    import oracle_hunter as oh
-
-    _trusted_feed(monkeypatch)
-    monkeypatch.delenv("HACKERONE_USERNAME", raising=False)
-    monkeypatch.delenv("HACKERONE_API_TOKEN", raising=False)
-    monkeypatch.delenv("HACKERONE_API_KEY", raising=False)
-    monkeypatch.setattr(h1, "_ENV_FILES", ())
     prescan = tmp_path / "prescan_1.json"
     prescan.write_text(
-        json.dumps(
+        _json.dumps(
             {
                 "programs": [
                     {
@@ -360,6 +351,36 @@ def test_product_scan_without_h1_credentials_fails_before_dispatch(
             }
         )
     )
+    return prescan
+
+
+def test_product_scan_without_h1_credentials_fails_before_dispatch(
+    tmp_path, monkeypatch
+):
+    """No API keys AND no CDP browser → fail loud before dispatch.
+
+    The browser IS a credential path (the operator's signed-in session); a
+    scan with neither path would silently mint an all-unverified report, so
+    the preflight must die instead. "No browser" is the premise, so both CDP
+    probes are pinned to None — deterministic on machines that do have a
+    Chrome binary.
+    """
+    import types
+
+    import oracle_hunter as oh
+    import oracle_intake as _intake
+
+    _trusted_feed(monkeypatch)
+    monkeypatch.delenv("HACKERONE_USERNAME", raising=False)
+    monkeypatch.delenv("HACKERONE_API_TOKEN", raising=False)
+    monkeypatch.delenv("HACKERONE_API_KEY", raising=False)
+    monkeypatch.setattr(h1, "_ENV_FILES", ())
+    # Premise: no CDP browser is reachable and none can be started.
+    monkeypatch.setattr(_intake, "_cdp_tabs", lambda port: None)
+    monkeypatch.setattr(
+        _intake, "_cdp_ensure_browser", lambda port=_intake._CDP_DEFAULT_PORT: None
+    )
+    prescan = _h1_prescan(tmp_path)
     args = types.SimpleNamespace(
         prescan_file=str(prescan),
         out_dir=str(tmp_path),
@@ -373,6 +394,51 @@ def test_product_scan_without_h1_credentials_fails_before_dispatch(
     with pytest.raises(SystemExit) as excinfo:
         oh.cmd_scan(args)
     assert excinfo.value.code == 1
+
+
+def test_product_scan_without_h1_credentials_proceeds_with_cdp_browser(
+    tmp_path, monkeypatch
+):
+    """No API keys but a CDP browser IS available → scan proceeds via CDP.
+
+    The browser session replaces the API key as the credential path; the
+    scan must not die. With no structured scope readable from the page the
+    rescan returns a clean miss, so the program stays unverified and the
+    scan completes normally.
+    """
+    import types
+
+    import oracle_hunter as oh
+    import oracle_intake as _intake
+
+    _trusted_feed(monkeypatch)
+    monkeypatch.delenv("HACKERONE_USERNAME", raising=False)
+    monkeypatch.delenv("HACKERONE_API_TOKEN", raising=False)
+    monkeypatch.delenv("HACKERONE_API_KEY", raising=False)
+    monkeypatch.setattr(h1, "_ENV_FILES", ())
+    # Premise: a CDP browser is reachable.
+    monkeypatch.setattr(
+        _intake, "_cdp_tabs", lambda port: [{"type": "page", "url": "about:blank"}]
+    )
+    # Premise: the page yields no structured scope → clean miss per program.
+    monkeypatch.setattr(_intake, "_cdp_rescan_program", lambda handle: None)
+    prescan = _h1_prescan(tmp_path)
+    args = types.SimpleNamespace(
+        prescan_file=str(prescan),
+        out_dir=str(tmp_path),
+        cloud=True,
+        probe_timeout=1,
+        no_cloud=False,
+        sites=None,
+        top_n=None,
+        config=None,
+    )
+    try:
+        oh.cmd_scan(args)
+    except SystemExit as exc:  # pragma: no cover - diagnostic aid
+        raise AssertionError(
+            f"cmd_scan must proceed with a CDP browser available; exited {exc.code}"
+        )
 
 
 def test_verified_h1_scope_feeds_deep_dive_without_bridge(tmp_path, monkeypatch):
