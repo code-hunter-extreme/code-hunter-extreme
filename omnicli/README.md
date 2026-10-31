@@ -128,9 +128,18 @@ omni swarm "design a token-bucket rate limiter"          # collaborate: parallel
 omni swarm --redteam --source-file ./src/auth.py "audit authz bugs" # ground citations against source
 omni swarm --mode deliberate "compare approaches for this design"
 omni swarm -n 5 "..."                                     # 5 members
+omni swarm --dry-run "..."                                # preview the panel; no calls
 omni swarm --raw "..."                                    # show each member, skip synthesis
 omni swarm -p openrouter "..."                            # restrict to one provider's families
 ```
+
+By default a swarm is capped at **8 healthiest, family-diverse providers**
+rather than every configured key. Health comes from `omni heartbeat` (a
+failed canary counts as unhealthy) plus a short-lived failure cache written
+by completed runs, so balance-gated or throttled gateways drop to the back
+of the next panel. Use `-n` to override the cap. `--dry-run` prints the
+selected panel with each provider's health tier and exits before any model
+call or local-file scan.
 
 Conflicting mode flags are rejected instead of silently choosing one.
 
@@ -327,6 +336,11 @@ omni heartbeat                # per-API status, latency, model count -> status f
 omni heartbeat --canary       # also send a tiny prompt to confirm the model answers
 omni heartbeat --run-tasks    # also run the user task file
 ```
+
+`--canary` is the signal swarm routing trusts most: `/models` can answer
+while chat is balance-gated or the default model is stale. A failed canary
+marks that provider unhealthy for the next panel. The canary budget is
+large enough for reasoning models to finish thinking.
 
 Built-in health checks are the default. A separate **user task file**
 (`heartbeat.tasks_file`, JSON list) defines tasks to run on a tick:

@@ -161,6 +161,42 @@ def test_cmd_redteam_reports_actual_swarm_size(monkeypatch, capsys):
     assert seen["report_path"] == oracle_hunter.REPORTS_DIR
 
 
+@requires_omnicli
+def test_cmd_redteam_uses_health_aware_panel(monkeypatch, capsys):
+    """A red-team audit must not fan out to every configured key."""
+    try:
+        import omnicli.router as router_mod
+    except ImportError:
+        pytest.skip("installed OmniCLI checkout predates the health-aware router")
+
+    seen = {}
+
+    class FakeRouter:
+        def __init__(self, cfg):
+            seen["cfg"] = cfg
+
+        def build_panel(self, **kwargs):
+            seen["panel_kwargs"] = kwargs
+            return [("p1", "m1")]
+
+    monkeypatch.setattr(router_mod, "ProviderRouter", FakeRouter)
+    import omnicli.orchestrate as orch
+
+    monkeypatch.setattr(
+        orch,
+        "run_orchestration",
+        lambda *a, **k: {
+            "final": "triage text",
+            "evidence_gate": _gate("NO_UPHELD_FINDINGS"),
+            "report_path": None,
+        },
+    )
+    monkeypatch.setattr(oracle_hunter, "RICH", False)
+    oracle_hunter.cmd_redteam("some-program", SimpleNamespace(finding=None))
+    assert seen["panel_kwargs"] == {}
+    assert "1-model adversarial swarm" in capsys.readouterr().out
+
+
 def test_cmd_redteam_refuses_oversized_source(monkeypatch, tmp_path, capsys):
     huge = tmp_path / "huge.py"
     huge.write_text("x = 1\n" * (oracle_hunter.ORACLE_AUDIT_SOURCE_CAP // 6 + 10))

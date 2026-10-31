@@ -277,6 +277,13 @@ def run_one_shot(
                     print(out)
                 else:
                     console.print(Markdown(out))
+                if not str(out or "").strip():
+                    click.echo(
+                        "[omnicli] provider returned no content — reasoning "
+                        "models can consume the whole --max-tokens budget; "
+                        "retry with a larger --max-tokens (e.g. 4096).",
+                        err=True,
+                    )
             except Exception as e:
                 console.print(f"[bold red]Error from {prov}:[/bold red] {e}")
                 sys.exit(1)
@@ -302,6 +309,12 @@ def run_one_shot(
                 sys.exit(1)
         sys.stdout.write("\n")
         sys.stdout.flush()
+        if not full_text.strip():
+            sys.stderr.write(
+                "\n[omnicli] provider returned no content — reasoning models "
+                "can consume the whole --max-tokens budget; retry with a "
+                "larger --max-tokens (e.g. 4096).\n"
+            )
     except KeyboardInterrupt:
         sys.stderr.write("\nInterrupted.\n")
 
@@ -1264,7 +1277,10 @@ def cmd_agent(provider: Optional[str], model: Optional[str], max_turns: int,
 
 @main.command("swarm")
 @click.option("-n", "--size", type=click.IntRange(min=1), default=None,
-              help="Number of swarm members (default: all active providers)")
+              help="Number of swarm members (default: up to 8 healthiest, "
+                   "family-diverse providers)")
+@click.option("--dry-run", is_flag=True, default=False,
+              help="Show the health-ranked panel that would run, then exit")
 @click.option("--mode", type=click.Choice(["collaborate", "redteam", "deliberate"]), default=None,
               help="Mode: parallel claim-merge, redteam, or two-round deliberate discussion "
                    "(default: collaborate)")
@@ -1316,7 +1332,8 @@ def cmd_agent(provider: Optional[str], model: Optional[str], max_turns: int,
 @click.option("--proof-packet", "proof_packet_path", type=click.Path(dir_okay=False), default=None,
               help="Destination file to save the cryptographically signed Proof Packet (redteam only)")
 @click.argument("prompt", nargs=-1, required=True)
-def cmd_swarm(size: Optional[int], mode: Optional[str], flag_collaborate: bool,
+def cmd_swarm(size: Optional[int], dry_run: bool, mode: Optional[str],
+              flag_collaborate: bool,
               redteam: bool, raw: bool, enrich_files: bool, member_tools: bool,
               allowed_hosts: tuple, provider: Optional[str],
               checkpoint: Optional[str], resume: bool, source_paths: tuple,
@@ -1360,6 +1377,34 @@ def cmd_swarm(size: Optional[int], mode: Optional[str], flag_collaborate: bool,
     report_destination = (
         report_path or "reports"
     ) if active_mode == "redteam" else None
+
+    from omnicli.router import ProviderRouter
+
+    router = ProviderRouter(cfg)
+
+    def _roster(panel, health):
+        return ", ".join(
+            f"{p}:{m.split('/')[-1]} ({orch.classify_family(m)}; "
+            f"{health.get(p, 'unknown')})"
+            for p, m in panel
+        )
+
+    if dry_run:
+        panel = router.build_panel(size=size, provider=provider)
+        if not panel:
+            console.print(
+                "[red]No models available for a swarm. Run 'omni scan' first.[/red]"
+            )
+            return
+        console.print(Panel(
+            f"[bold cyan]Swarm {active_mode.upper()} panel (dry run)[/bold cyan] — "
+            f"{len(panel)} members\n"
+            f"[dim]{escape(_roster(panel, router.health()))}[/dim]\n"
+            "[dim]Health comes from 'omni heartbeat' plus recent member "
+            "failures; no calls were made.[/dim]",
+            title="Swarm Dry Run", border_style="cyan",
+        ))
+        return
 
     source_files = {}
     total_source_chars = 0
@@ -1455,12 +1500,13 @@ def cmd_swarm(size: Optional[int], mode: Optional[str], flag_collaborate: bool,
             )
             prebuilt_grounding = None
 
-    swarm = orch.build_swarm(cfg, size=size, provider=provider)
+    swarm = router.build_panel(size=size, provider=provider)
     if not swarm:
         console.print("[red]No models available for a swarm. Run 'omni scan' first.[/red]")
         return
 
-    roster = ", ".join(f"{p}:{m.split('/')[-1]} ({orch.classify_family(m)})" for p, m in swarm)
+    health = router.health()
+    roster = _roster(swarm, health)
     console.print(Panel(
         f"[bold cyan]Swarm {active_mode.upper()}[/bold cyan] — {len(swarm)} members\n"
         f"[dim]{escape(roster)}[/dim]\n[bold green]Task:[/bold green] {escape(task)}",
@@ -1538,6 +1584,11 @@ def cmd_swarm(size: Optional[int], mode: Optional[str], flag_collaborate: bool,
             )
         except (OSError, ValueError, sqlite3.Error) as exc:
             raise click.ClickException(str(exc)) from exc
+    try:
+        router.record_results(out.get("members"))
+    except Exception:
+        # Failure memory is an optimization; never fail a completed run.
+        pass
     # Model/tool output is untrusted — escape it so it cannot inject Rich markup.
     for r in out["members"]:
         role_tag = f" [{r['role']}]" if "role" in r else ""

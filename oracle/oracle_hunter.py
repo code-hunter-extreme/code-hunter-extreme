@@ -10899,6 +10899,10 @@ def cmd_redteam(target: str, args) -> None:
         from omnicli.client import OmniClient
         from omnicli.orchestrate import build_swarm, run_orchestration
         from omnicli.scanner import classify_family
+        try:
+            from omnicli.router import ProviderRouter
+        except ImportError:  # older OmniCLI checkout
+            ProviderRouter = None
     except ImportError as e:
         _die(f"OmniCLI engine not found or failed to load: {e}")
 
@@ -10910,7 +10914,12 @@ def cmd_redteam(target: str, args) -> None:
 
     cfg = ConfigManager()
     client = OmniClient(cfg)
-    swarm = build_swarm(cfg)
+    if ProviderRouter is not None:
+        # Health-ranked, capped, family-diverse panel: do not fan a red-team
+        # audit out to every configured key, including balance-gated ones.
+        swarm = ProviderRouter(cfg).build_panel()
+    else:
+        swarm = build_swarm(cfg)
     if not swarm:
         _die("No swarm members are configured (run 'omni scan' first).")
     families = sorted({classify_family(model) for _, model in swarm})

@@ -46,7 +46,9 @@ def _canary(cfg: Any, client: Any, provider: str) -> Dict[str, Any]:
             provider_id=provider,
             messages=[{"role": "user", "content": "Reply with the single word: OK"}],
             model=model,
-            max_tokens=5,
+            # Reasoning models spend hidden tokens before answering; a
+            # 5-token budget returns empty content on a healthy endpoint.
+            max_tokens=64,
         )
         content = ((res.get("choices") or [{}])[0].get("message", {}) or {}).get("content", "") or ""
         return {

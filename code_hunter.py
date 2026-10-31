@@ -72,11 +72,18 @@ def _utc_now() -> str:
 
 def _run(cmd: List[str], cwd: Optional[Path] = None, timeout: int = 3600,
          capture: bool = True) -> subprocess.CompletedProcess:
-    """Run a command, echoing a banner first."""
+    """Run a command, echoing a banner first.
+
+    Child processes (notably Oracle's red-team path) resolve OmniCLI via
+    ``OMNICLI_HOME``. Pin it to this checkout so the pipeline never runs
+    against a stale OmniCLI copy; an explicit operator setting wins.
+    """
     console.print(f"[dim]$[/dim] {' '.join(cmd)}"
                   + (f"  (cwd={cwd})" if cwd else ""))
+    env = os.environ.copy()
+    env.setdefault("OMNICLI_HOME", str(OMNICLI_ROOT))
     return subprocess.run(
-        cmd, cwd=str(cwd) if cwd else None,
+        cmd, cwd=str(cwd) if cwd else None, env=env,
         capture_output=capture, text=True, timeout=timeout,
     )
 

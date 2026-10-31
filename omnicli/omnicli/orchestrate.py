@@ -199,13 +199,19 @@ def build_swarm(
     cfg: Any,
     size: Optional[int] = None,
     provider: Optional[str] = None,
+    providers: Optional[List[str]] = None,
 ) -> List[Tuple[str, str]]:
     """Pick up to `size` (provider, model) pairs, family-diverse across providers.
 
     If size is None, defaults to the number of configured providers with keys
-    so all active providers participate.
+    so all active providers participate. Pass an explicit ``providers`` list
+    to control membership/order (used by the health-aware router); the list
+    is deduplicated case-insensitively and unknown ids are ignored by the
+    model-roster lookup.
     """
-    if provider:
+    if providers is not None:
+        providers = list(dict.fromkeys(str(p).lower() for p in providers))
+    elif provider:
         providers = [provider.lower()]
     else:
         all_p = list(cfg.data.get("providers", {}).keys())

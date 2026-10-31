@@ -206,6 +206,31 @@ class TestOmniCLIFailures:
         assert result == 1
 
 
+class TestSubprocessEnvironment:
+    """Oracle resolves OmniCLI via OMNICLI_HOME; the pipeline must pin it to
+    this checkout instead of silently using a stale installed copy."""
+
+    def test_run_pins_omnicli_home(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("OMNICLI_HOME", raising=False)
+        monkeypatch.setattr(ch, "OMNICLI_ROOT", tmp_path)
+        cp = ch._run([
+            sys.executable, "-c",
+            "import os; print(os.environ.get('OMNICLI_HOME', ''))",
+        ])
+        assert cp.returncode == 0
+        assert cp.stdout.strip() == str(tmp_path)
+
+    def test_run_respects_explicit_omnicli_home(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("OMNICLI_HOME", "/custom/omnicli")
+        monkeypatch.setattr(ch, "OMNICLI_ROOT", tmp_path)
+        cp = ch._run([
+            sys.executable, "-c",
+            "import os; print(os.environ.get('OMNICLI_HOME', ''))",
+        ])
+        assert cp.returncode == 0
+        assert cp.stdout.strip() == "/custom/omnicli"
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 5. PIPELINE FAILURES
 # ─────────────────────────────────────────────────────────────────────────────

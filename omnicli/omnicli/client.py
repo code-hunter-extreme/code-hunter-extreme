@@ -20,6 +20,14 @@ from omnicli.config import DEFAULT_PROVIDERS, ConfigManager
 _RETRYABLE_STATUS_CODES = {408, 429, 500, 502, 503, 504}
 _MAX_CHAT_ATTEMPTS = 3
 
+# Reasoning models (AionLabs, GonkaBroker, some routers) emit hidden
+# reasoning tokens that count against max_tokens. With a small budget the
+# completion can end with finish_reason="length" and an EMPTY content
+# string: the model thought, then ran out before answering. When that
+# happens we retry once with a larger budget instead of returning silence.
+_REASONING_RETRY_FACTOR = 4
+_REASONING_RETRY_CAP = 8192
+
 
 class ProviderError(Exception):
     def __init__(self, provider: str, status_code: Optional[int], message: str) -> None:
@@ -480,9 +488,86 @@ class OmniClient:
                 # they asked for, so a swap mislabels which model produced it.
                 # Fail loudly and let the caller pick a valid model.
                 raise ProviderError(provider_id, res.status_code, res.text)
-            return res.json()
+            data = res.json()
+            return self._retry_reasoning_budget(
+                url, headers, payload, data, timeout
+            )
         except httpx.RequestError as e:
             raise ProviderError(provider_id, None, f"Request failed: {e}")
+
+    @staticmethod
+    def _content_of(data: Any) -> str:
+        """Best-effort assistant content from an OpenAI-shaped response."""
+        try:
+            message = (data.get("choices") or [{}])[0].get("message") or {}
+            content = message.get("content")
+            return "" if content is None else str(content)
+        except (AttributeError, IndexError, KeyError, TypeError):
+            return ""
+
+    @staticmethod
+    def _finish_reason_of(data: Any) -> str:
+        try:
+            return str(
+                ((data.get("choices") or [{}])[0] or {}).get("finish_reason") or ""
+            )
+        except (AttributeError, IndexError, KeyError, TypeError):
+            return ""
+
+    def _retry_reasoning_budget(
+        self,
+        url: str,
+        headers: Dict[str, str],
+        payload: Dict[str, Any],
+        data: Dict[str, Any],
+        timeout: float,
+    ) -> Dict[str, Any]:
+        """Retry once when reasoning consumed the whole output budget.
+
+        The caller asked for an ANSWER. If the model returned no content and
+        stopped because it hit max_tokens, a bigger budget usually yields the
+        answer. The retry is bounded (factor 4, cap 8192) and never masks a
+        provider error: a non-200 retry returns the original response.
+        """
+        if self._content_of(data).strip():
+            return data
+        if self._finish_reason_of(data) != "length":
+            return data
+        budget = payload.get("max_tokens")
+        if (
+            not isinstance(budget, int)
+            or isinstance(budget, bool)
+            or budget <= 0
+            or budget >= _REASONING_RETRY_CAP
+        ):
+            return data
+        retry_payload = dict(payload)
+        retry_payload["max_tokens"] = min(
+            budget * _REASONING_RETRY_FACTOR, _REASONING_RETRY_CAP
+        )
+        try:
+            retry = self.post_chat_completion(url, headers, retry_payload, timeout)
+        except httpx.RequestError:
+            # The first response was valid; a flaky retry must not mask it.
+            return data
+        if retry.status_code != 200:
+            return data
+        try:
+            retried = retry.json()
+        except ValueError:
+            return data
+        if not isinstance(retried, dict):
+            return data
+        if self._content_of(retried).strip():
+            meta = retried.get("_omnicli")
+            if not isinstance(meta, dict):
+                meta = {}
+                retried["_omnicli"] = meta
+            meta["reasoning_retry"] = {
+                "from_max_tokens": budget,
+                "to_max_tokens": retry_payload["max_tokens"],
+            }
+        return retried
 
     def chat_stream(
         self,

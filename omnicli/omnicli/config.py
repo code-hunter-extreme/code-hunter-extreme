@@ -213,7 +213,9 @@ DEFAULT_PROVIDERS = {
         "name": "FreeAI",
         "base_url": "https://api.free.ai/v1",
         "env_key": "FREEAI_API_KEY",
-        "default_model": "default",
+        # "default" is not a served model id (400); qwen7b is the gateway's
+        # advertised chat entry point.
+        "default_model": "qwen7b",
         "description": "FreeAI Chat Gateway",
         "requires_auth_for_models": True,
         "fallback_models": [],
