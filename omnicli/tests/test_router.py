@@ -270,6 +270,14 @@ def test_corrupt_health_files_are_ignored(tmp_path):
     assert router.ranked_providers() == ["p0", "p1", "p2"]
 
 
+def test_failure_cache_is_owner_only(tmp_path):
+    cfg = _cfg(tmp_path)
+    ProviderRouter(cfg, now=1000).record_failure("p0", "429 rate limit")
+    path = cfg.config_dir / "provider_failures.json"
+    assert path.is_file()
+    assert path.stat().st_mode & 0o777 == 0o600
+
+
 def test_unwritable_failure_cache_never_raises(tmp_path):
     cfg = _cfg(tmp_path)
     # Make the cache path a directory so the atomic replace fails.
