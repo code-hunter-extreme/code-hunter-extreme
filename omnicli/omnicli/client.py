@@ -14,7 +14,7 @@ from typing import Any, Dict, Generator, List, Optional
 
 import httpx
 
-from omnicli.config import ConfigManager
+from omnicli.config import DEFAULT_PROVIDERS, ConfigManager
 
 
 _RETRYABLE_STATUS_CODES = {408, 429, 500, 502, 503, 504}
@@ -57,6 +57,23 @@ class OmniClient:
             "User-Agent": "OmniCLI/1.0",
         }
 
+        # Provider-declared transport headers. Some OpenAI-compatible
+        # gateways sit behind Cloudflare and reject non-browser clients
+        # with error 1010; they declare a browser User-Agent here.
+        # Authorization is never overridable by provider metadata — the
+        # credential must come from the key store alone.
+        prov = self.cfg.data.get("providers", {}).get(provider_id, {})
+        extra = prov.get("extra_headers")
+        if isinstance(extra, dict):
+            for name, value in extra.items():
+                if (
+                    isinstance(name, str)
+                    and isinstance(value, str)
+                    and name.strip()
+                    and name.lower() != "authorization"
+                ):
+                    headers[name] = value
+
         if key:
             token = key if key.lower().startswith("bearer ") else "Bearer " + key
             headers["Authorization"] = token
@@ -80,6 +97,19 @@ class OmniClient:
         base = self.cfg.get_base_url(provider_id).rstrip("/")
         path = path.lstrip("/")
         return f"{base}/{path}"
+
+    def provider_supports_temperature(self, provider_id: str) -> bool:
+        """False when the provider/model rejects an explicit temperature.
+
+        Defaults to True. Configs written before the flag existed fall back
+        to the shipped default. Providers such as CometAPI's ``auto`` router
+        return 400 for any non-default temperature, so callers omit it.
+        """
+        provider_id = provider_id.lower()
+        prov = self.cfg.data.get("providers", {}).get(provider_id, {})
+        if "supports_temperature" not in prov:
+            prov = DEFAULT_PROVIDERS.get(provider_id, prov)
+        return prov.get("supports_temperature") is not False
 
     @staticmethod
     def _retry_delay(response: Optional[httpx.Response], attempt: int) -> float:
@@ -434,9 +464,10 @@ class OmniClient:
         payload: Dict[str, Any] = {
             "model": model_name,
             "messages": msgs,
-            "temperature": temperature,
             "stream": False,
         }
+        if self.provider_supports_temperature(provider_id):
+            payload["temperature"] = temperature
         if max_tokens:
             payload["max_tokens"] = max_tokens
 
@@ -491,9 +522,10 @@ class OmniClient:
         payload: Dict[str, Any] = {
             "model": model_name,
             "messages": msgs,
-            "temperature": temperature,
             "stream": True,
         }
+        if self.provider_supports_temperature(provider_id):
+            payload["temperature"] = temperature
         if max_tokens:
             payload["max_tokens"] = max_tokens
 

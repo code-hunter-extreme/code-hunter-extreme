@@ -253,6 +253,242 @@ DEFAULT_PROVIDERS = {
             {"model": "gpt-4o", "family": "openai"},
         ],
     },
+    # ── 2026-10 expansion: operator-supplied gateways ─────────────────────
+    "ovhcloud": {
+        "name": "OVHcloud AI Endpoints",
+        "base_url": "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1",
+        "env_key": "OVH_AI_ENDPOINTS_ACCESS_TOKEN",
+        "key_required": False,
+        "default_model": "Meta-Llama-3_3-70B-Instruct",
+        "description": "OVHcloud AI Endpoints OpenAI-compatible gateway (22 models, public tier; token optional)",
+        "requires_auth_for_models": False,
+        "fallback_models": [
+            "Qwen3.8-27B",
+            "gpt-oss-120b",
+            "Mistral-Small-3.2-24B-Instruct-2506",
+        ],
+        "verification_panel": [
+            {"model": "Meta-Llama-3_3-70B-Instruct", "family": "meta"},
+            {"model": "Qwen3.8-27B", "family": "qwen"},
+        ],
+    },
+    "aionlabs": {
+        "name": "AionLabs",
+        "base_url": "https://api.aionlabs.ai/v1",
+        "env_key": "AIONLABS_API_KEY",
+        "default_model": "aion-labs/aion-3.5",
+        "description": "AionLabs Aion models (Cloudflare-fronted: needs a browser User-Agent)",
+        "requires_auth_for_models": True,
+        "extra_headers": {
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
+        },
+        "fallback_models": [
+            "aion-labs/aion-3.5-mini",
+            "aion-labs/aion-3.0",
+        ],
+        "verification_panel": [
+            {"model": "aion-labs/aion-3.5", "family": "other"},
+        ],
+    },
+    "cohere": {
+        "name": "Cohere",
+        "base_url": "https://api.cohere.com/compatibility/v1",
+        "env_key": "COHERE_API_KEY",
+        "default_model": "command-a-plus-05-2026",
+        "description": "Cohere Command models via the OpenAI-compatible endpoint (native /v2 is not OpenAI-shaped)",
+        "requires_auth_for_models": True,
+        "fallback_models": [
+            "command-a-03-2025",
+            "command-r-plus-08-2024",
+            "command-r7b-12-2024",
+        ],
+        "verification_panel": [
+            {"model": "command-a-plus-05-2026", "family": "cohere"},
+            {"model": "command-a-03-2025", "family": "cohere"},
+        ],
+    },
+    "gonkabroker": {
+        "name": "GonkaBroker Proxy",
+        "base_url": "https://proxy.gonkabroker.com/v1",
+        "env_key": "GONKABROKER_API_KEY",
+        "default_model": "zai-org/GLM-5.3-Flash",
+        "description": "GonkaBroker OpenAI-compatible proxy (GLM / DeepSeek / MiniMax)",
+        "requires_auth_for_models": True,
+        "fallback_models": [
+            "deepseek-ai/DeepSeek-V4-Flash-0731",
+            "MiniMaxAI/MiniMax-M2.7",
+        ],
+        "verification_panel": [
+            {"model": "zai-org/GLM-5.3-Flash", "family": "glm"},
+            {"model": "deepseek-ai/DeepSeek-V4-Flash-0731", "family": "deepseek"},
+        ],
+    },
+    "kilo": {
+        "name": "Kilo AI Gateway",
+        "base_url": "https://api.kilo.ai/api/gateway",
+        "env_key": "KILO_API_KEY",
+        "default_model": "kilo-auto/free",
+        "description": "Kilo AI gateway (free auto-router tier; paid models need credits)",
+        "requires_auth_for_models": True,
+        "fallback_models": [
+            "deepseek/deepseek-v4.1-flash",
+            "z-ai/glm-5.3-flash",
+            "nvidia/nemotron-3.5-super-vl:free",
+        ],
+        "verification_panel": [
+            {"model": "kilo-auto/free", "family": "other"},
+        ],
+    },
+    "modelscope": {
+        "name": "ModelScope",
+        "base_url": "https://api-inference.modelscope.cn/v1",
+        "env_key": "MODELSCOPE_API_KEY",
+        "default_model": "deepseek-ai/DeepSeek-V4.1-Flash",
+        "description": "Alibaba ModelScope inference (requires an Alibaba Cloud account binding)",
+        "requires_auth_for_models": True,
+        "fallback_models": [
+            "deepseek-ai/DeepSeek-V4-Pro",
+            "MiniMax/MiniMax-M3",
+            "mistralai/Mistral-Large-Instruct-2407",
+        ],
+        "verification_panel": [
+            {"model": "deepseek-ai/DeepSeek-V4.1-Flash", "family": "deepseek"},
+            {"model": "MiniMax/MiniMax-M3", "family": "minimax"},
+        ],
+    },
+    "airforce": {
+        "name": "AI Airforce",
+        "base_url": "https://api.airforce/v1",
+        "env_key": "AIRFORCE_API_KEY",
+        "default_model": "gemma3-270m:free",
+        "description": "AI Airforce multi-model gateway (free tier + paid subscription; browser UA required)",
+        "requires_auth_for_models": True,
+        "extra_headers": {
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
+        },
+        "fallback_models": [
+            "gpt-oss-20b",
+            "llama-instant",
+            "mistral-large-4",
+        ],
+        "verification_panel": [
+            {"model": "gemma3-270m:free", "family": "google"},
+        ],
+    },
+    "orcarouter": {
+        "name": "OrcaRouter",
+        "base_url": "https://api.orcarouter.ai/v1",
+        "env_key": "ORCAROUTER_API_KEY",
+        "default_model": "orcarouter/free",
+        "description": "OrcaRouter multi-model router (free tier; wallet billing for paid models)",
+        "requires_auth_for_models": True,
+        "fallback_models": [
+            "deepseek/deepseek-v4.1-flash-free",
+            "orcarouter/auto",
+            "google/gemini-3.5-flash",
+        ],
+        "verification_panel": [
+            {"model": "orcarouter/free", "family": "other"},
+        ],
+    },
+    "tokenrouter": {
+        "name": "TokenRouter",
+        "base_url": "https://api.tokenrouter.com/v1",
+        "env_key": "TOKENROUTER_API_KEY",
+        "default_model": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+        "description": "TokenRouter multi-model gateway (free tier + gift balance; browser UA required)",
+        "requires_auth_for_models": True,
+        "extra_headers": {
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
+        },
+        "fallback_models": [
+            "qwen/qwen3.5-9b",
+            "deepseek/deepseek-v4-pro",
+            "google/gemini-3.5-flash-lite",
+        ],
+        "verification_panel": [
+            {"model": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free", "family": "nvidia"},
+        ],
+    },
+    "haimaker": {
+        "name": "Haimaker",
+        "base_url": "https://api.haimaker.ai/v1",
+        "env_key": "HAIMAKER_API_KEY",
+        "default_model": "auto",
+        "description": "Haimaker LiteLLM gateway (keys unlock after $10 verified credits)",
+        "requires_auth_for_models": True,
+        "fallback_models": [],
+        "verification_panel": [],
+    },
+    "publicai": {
+        "name": "PublicAI",
+        "base_url": "https://api.publicai.co/v1",
+        "env_key": "PUBLICAI_API_KEY",
+        "default_model": "swiss-ai/apertus-8b-instruct",
+        "description": "PublicAI sovereign-model inference (Apertus, SEA-LION, ALIA)",
+        "requires_auth_for_models": True,
+        "fallback_models": [
+            "swiss-ai/apertus-70b-instruct",
+            "aisingapore/Qwen-SEA-LION-v4-32B-IT",
+            "BSC-LT/ALIA-40b-instruct",
+        ],
+        "verification_panel": [
+            {"model": "swiss-ai/apertus-8b-instruct", "family": "other"},
+            {"model": "aisingapore/Qwen-SEA-LION-v4-32B-IT", "family": "qwen"},
+        ],
+    },
+    "cometapi": {
+        "name": "CometAPI",
+        "base_url": "https://api.cometapi.com/v1",
+        "env_key": "COMETAPI_API_KEY",
+        "default_model": "auto",
+        "description": "CometAPI aggregator (OpenAI/Anthropic/Google/DeepSeek, 500+ models)",
+        "requires_auth_for_models": True,
+        # The `auto` router rejects any explicit temperature (400
+        # unsupported_value); omit it so the default applies.
+        "supports_temperature": False,
+        "fallback_models": [
+            "gpt-4o-mini",
+            "deepseek-chat",
+            "gemini-3.5-flash",
+        ],
+        "verification_panel": [
+            {"model": "gpt-4o-mini", "family": "openai"},
+            {"model": "deepseek-chat", "family": "deepseek"},
+        ],
+    },
+    "nanogpt": {
+        "name": "NanoGPT",
+        "base_url": "https://nano-gpt.com/api/v1",
+        "env_key": "NANOGPT_API_KEY",
+        "default_model": "openai/gpt-4o-mini",
+        "description": "NanoGPT pay-per-use gateway (OpenAI-compatible, 600+ models)",
+        "requires_auth_for_models": True,
+        "fallback_models": [
+            "particle-ai/particle-1",
+            "openai/gpt-5.6-luna",
+            "google/gemini-3.5-flash",
+        ],
+        "verification_panel": [
+            {"model": "openai/gpt-4o-mini", "family": "openai"},
+        ],
+    },
+    "requesty": {
+        "name": "Requesty Router",
+        "base_url": "https://router.requesty.ai/v1",
+        "env_key": "REQUESTY_API_KEY",
+        "default_model": "openai/gpt-4o-mini",
+        "description": "Requesty multi-provider router (800+ models, wallet billing)",
+        "requires_auth_for_models": True,
+        "fallback_models": [
+            "google/gemini-3.5-flash",
+            "openai/gpt-5.4-nano",
+        ],
+        "verification_panel": [
+            {"model": "openai/gpt-4o-mini", "family": "openai"},
+            {"model": "google/gemini-3.5-flash", "family": "google"},
+        ],
+    },
 }
 
 # Per-provider memory (context injection + optional history). File entries are
@@ -513,8 +749,22 @@ class ConfigManager:
         return ""
 
     def provider_requires_key(self, provider_id: str) -> bool:
-        """True when the provider declares an env_key credential."""
-        prov = self.data.get("providers", {}).get(provider_id.lower(), {})
+        """True when the provider needs a credential before any HTTP.
+
+        Defaults to ``bool(env_key)``. A provider may set
+        ``key_required: false`` for a public gateway that accepts an
+        OPTIONAL token (e.g. OVHcloud AI Endpoints): the env_key still
+        documents how to supply one, but its absence is not an error.
+        """
+        provider_id = provider_id.lower()
+        prov = self.data.get("providers", {}).get(provider_id, {})
+        # Configs written before a default field existed do not carry it.
+        # Fall back to the shipped default so upgrades pick up new flags
+        # (e.g. key_required=false for public gateways).
+        if "key_required" not in prov:
+            prov = DEFAULT_PROVIDERS.get(provider_id, prov)
+        if prov.get("key_required") is False:
+            return False
         return bool(prov.get("env_key"))
 
     def has_credential(self, provider_id: str) -> bool:
