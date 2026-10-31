@@ -55,6 +55,42 @@ python3 code_hunter.py oracle verify-download targets/hackerone/shopify/reports/
 python3 code_hunter.py report --output my_hunt_report.json
 ```
 
+## OmniCLI Routing and Red-Team Panels
+
+Oracle's `redteam` command now uses OmniCLI's health-aware router instead of
+fanning out to every configured provider. The panel is capped at 8 members,
+prefers one provider per model family, and pushes known-dead providers to the
+back. Health comes from `omni heartbeat` (a failed canary counts as unhealthy)
+plus a short-lived failure cache written by completed swarm runs.
+
+```bash
+# From the OmniCLI checkout:
+cd omnicli
+
+# Refresh chat-level health (not just /models reachability)
+python3 -m omnicli.cli heartbeat --canary
+
+# Preview the exact panel and health tiers without spending a call
+python3 -m omnicli.cli swarm --dry-run "audit this target"
+
+# From the pipeline root: Oracle red-team audit (up to 8 members)
+cd ..
+python3 code_hunter.py oracle redteam --target ./targets/hackerone/example
+```
+
+For a lighter panel, run `omni swarm --redteam -n 5 ...` directly from the
+OmniCLI checkout; Oracle's `redteam` uses the default cap. Five members is 20
+attack calls (5 × 4 threat scenarios), eight is 32.
+
+`code_hunter.py` pins `OMNICLI_HOME` to this checkout for every subprocess, so
+Oracle never silently runs against a stale OmniCLI copy. An explicit
+`OMNICLI_HOME` set by the operator wins.
+
+Reasoning models (AionLabs, GonkaBroker, reasoning routers) can consume the
+whole output budget before answering. OmniCLI retries once with a 4x budget
+(capped at 8192) when the response is empty with `finish_reason="length"`, so
+small `--max-tokens` values no longer return silence on non-streaming calls.
+
 ## Unwired Flags (documented, not yet connected to pipeline)
 
 These flags exist on individual commands but aren't auto-injected by `pipeline --run`:
